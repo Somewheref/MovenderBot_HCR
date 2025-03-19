@@ -6,7 +6,14 @@ SHELL [ "/bin/bash", "-c" ]
 RUN apt-get update && apt-get install -y \
     python3-catkin-tools \
     git \
-    build-essential
+    build-essential \
+    qt5-default \
+    libqt5gui5 \
+    libqt5widgets5 \
+    libqt5core5a \
+    ros-noetic-rviz \
+    dos2unix \
+    nano
 
 ####################################################
 # Clone the Aria-legacy repository and build it here
@@ -22,7 +29,10 @@ RUN mkdir src && source /opt/ros/noetic/setup.bash && catkin init
 # Install the ROS dependencies
 RUN apt install -y \
     ros-noetic-tf \
-    ros-noetic-teleop-twist-keyboard
+    ros-noetic-teleop-twist-keyboard \
+    ros-noetic-rviz \
+    ros-noetic-joint-state-publisher \
+    ros-noetic-robot-state-publisher
 
 ####################################################
 # Clone and build ROSARIA

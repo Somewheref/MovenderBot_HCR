@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROS Bridge Web App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .control-panel {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 15px;
+        }
+        .btn {
+            padding: 8px 12px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+        }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
+        .btn:hover { opacity: 0.8; }
+
+        #channels {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .channel {
+            width: 48%;
+            min-width: 300px;
+            box-sizing: border-box;
+            padding: 15px;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .messages {
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 5px;
+            margin-top: 5px;
+            background: #f0f0f0;
+        }
+
+        @media (max-width: 768px) {
+            .channel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>ROS Bridge Web App</h1>
+
+    <div class="control-panel">
+        <button class="btn btn-primary" onclick="promptForChannel('subscribe')">New Subscribe Channel</button>
+        <button class="btn btn-primary" onclick="promptForChannel('publish')">New Publish Channel</button>
+    </div>
+
+    <div id="channels"></div>
+
+    <script>
+        const ros = new WebSocket("ws://localhost:9090");
+        const channels = { subscribe: {}, publish: {} };
+        const intervals = {};
+        let twistMsg = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
+
+        ros.onopen = () => console.log("Connected to rosbridge");
+
+        ros.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log("Received data:", data);
+
+            if (data.op === "publish") {
+                const topic = data.topic;
+                const message = data.msg;
+
+                if (!message) {
+                    console.log(`No message data for topic ${topic}`);
+                    return;
+                }
+
+                if (topic === "/RosAria/cmd_vel" && data.msg._type === "geometry_msgs/Twist") {
+                    const formattedMessage = formatTwistMessage(message);
+                    console.log("Received Twist Message:", formattedMessage);  // Log the received Twist message
+
+                    // Find the subscribe channel for the given topic
+                    if (channels.subscribe[topic]) {
+                        const msgList = channels.subscribe[topic].querySelector(".messages");
+                        const msgItem = document.createElement("li");
+                        msgItem.textContent = formattedMessage;  // Display the formatted Twist message
+                        msgList.appendChild(msgItem);
+                        msgList.scrollTop = msgList.scrollHeight;  // Scroll to the latest message
+                    }
+                }
+            }
+        };
+
+        function formatTwistMessage(msg) {
+            const linear = msg.linear ? `Linear - x: ${msg.linear.x}, y: ${msg.linear.y}, z: ${msg.linear.z}` : "Linear data missing";
+            const angular = msg.angular ? `Angular - x: ${msg.angular.x}, y: ${msg.angular.y}, z: ${msg.angular.z}` : "Angular data missing";
+            return `${linear}, ${angular}`;
+        }
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'w') {
+                // Move forward
+                twistMsg.linear.x = 0.5;
+            } else if (event.key === 's') {
+                // Move backward
+                twistMsg.linear.x = -0.5;
+            } else if (event.key === 'a') {
+                // Turn left
+                twistMsg.angular.z = 0.5;
+            } else if (event.key === 'd') {
+                // Turn right
+                twistMsg.angular.z = -0.5;
+            }
+
+            // Send the updated Twist message to the robot
+            sendTwistMessage();
+        });
+
+        document.addEventListener('keyup', function(event) {
+            if (event.key === 'w' || event.key === 's') {
+                // Stop moving forward/backward
+                twistMsg.linear.x = 0;
+            }
+            if (event.key === 'a' || event.key === 'd') {
+                // Stop turning
+                twistMsg.angular.z = 0;
+            }
+
+            // Send the updated (stopped) Twist message
+            sendTwistMessage();
+        });
+
+        function sendTwistMessage() {
+            const topic = '/RosAria/cmd_vel';  // Topic for controlling the robot
+            const msg = JSON.stringify({
+                op: "publish",
+                topic: topic,
+                msg: twistMsg
+            });
+
+            ros.send(msg);  // Send the Twist message to the robot
+        }
+
+        function promptForChannel(type) {
+            const topic = prompt(`Enter topic name for ${type}:`);
+            if (!topic) return;
+            getTopicType(topic, type);
+        }
+
+        function getTopicType(topic, type) {
+            const request = {
+                op: "call_service",
+                service: "/rosapi/topic_type",
+                args: { topic }
+            };
+
+            const responseHandler = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.service === "/rosapi/topic_type" && data.values && data.values.type) {
+                    const msgType = data.values.type;
+                    console.log(`Topic "${topic}" is of type: ${msgType}`);
+                    ros.removeEventListener("message", responseHandler);
+                    addChannel(type, topic, msgType);
+                }
+            };
+
+            ros.addEventListener("message", responseHandler);
+            ros.send(JSON.stringify(request));
+        }
+
+        function addChannel(type, topic, msgType) {
+            if (channels[type][topic]) {
+                alert(`A ${type} channel for "${topic}" already exists.`);
+                return;
+            }
+
+            const channelDiv = document.createElement("div");
+            channelDiv.className = "channel";
+            let content = `
+                <h2>${type.toUpperCase()}: ${topic} (${msgType})</h2>
+                ${type === "subscribe" ? '<ul class="messages"></ul>' : `
+                <input type="text" id="message-${topic}" placeholder="Enter message" />
+                <input type="number" id="frequency-${topic}" placeholder="Frequency (ms)" min="0" />
+                <button class="btn btn-primary" onclick="sendMessage('${topic}', '${msgType}')">Send</button>
+                <button class="btn btn-primary" onclick="startAutoSend('${topic}', '${msgType}')">Start Auto</button>
+                <button class="btn btn-danger" onclick="stopAutoSend('${topic}')">Stop Auto</button>
+                `}
+                <button class="btn btn-danger" onclick="removeChannel('${type}', '${topic}')">Close</button>
+            `;
+
+            channelDiv.innerHTML = content;
+            document.getElementById("channels").appendChild(channelDiv);
+            channels[type][topic] = channelDiv;
+
+            if (type === "subscribe") {
+                ros.send(JSON.stringify({ op: "subscribe", topic, type: msgType }));
+            }
+        }
+
+        function removeChannel(type, topic) {
+            if (channels[type][topic]) {
+                if (type === "subscribe") {
+                    ros.send(JSON.stringify({ op: "unsubscribe", topic }));
+                }
+                channels[type][topic].remove();
+                delete channels[type][topic];
+            }
+            stopAutoSend(topic);
+        }
+
+        function sendMessage(topic, msgType) {
+            const input = document.getElementById(`message-${topic}`);
+            if (!input) return;
+
+            const message = input.value;
+            if (message.trim() === "") {
+                alert("Message cannot be empty");
+                return;
+            }
+
+            let msg = null;
+
+            if (msgType === "std_msgs/String") {
+                msg = { data: message };
+            } else if (msgType === "geometry_msgs/Twist") {
+                try {
+                    const twistMsg = JSON.parse(message);
+                    msg = {
+                        linear: {
+                            x: parseFloat(twistMsg.linear.x),
+                            y: parseFloat(twistMsg.linear.y),
+                            z: parseFloat(twistMsg.linear.z)
+                        },
+                        angular: {
+                            x: parseFloat(twistMsg.angular.x),
+                            y: parseFloat(twistMsg.angular.y),
+                            z: parseFloat(twistMsg.angular.z)
+                        }
+                    };
+                } catch (e) {
+                    alert("Invalid Twist message format");
+                    return;
+                }
+            } else {
+                try {
+                    msg = JSON.parse(message);
+                } catch (e) {
+                    alert("Invalid message format");
+                    return;
+                }
+            }
+
+            ros.send(JSON.stringify({ op: "publish", topic, msg }));
+        }
+    </script>
+
+</body>
+</html>
